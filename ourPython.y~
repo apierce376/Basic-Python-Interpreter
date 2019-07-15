@@ -1,0 +1,217 @@
+%{
+
+/*-------------------------------------------------------------------------*
+ *---									---*
+ *---		ourPython.y						---*
+ *---									---*
+ *---	    This file defines the parser and high-level functions that	---*
+ *---	implement a basic Python interpreter.				---*
+ *---									---*
+ *---	----	----	----	----	----	----	----	----	---*
+ *---									---*
+ *---	Version 1a		2018 May 16		Joseph Phillips	---*
+ *---									---*
+ *-------------------------------------------------------------------------*/
+
+/*-------------------------------------------------------------------------*
+
+				Compile with:
+bison -d --debug ourPython.y
+g++ -c ourPython.tab.c -g
+flex -o ourPython.cpp ourPython.lex 
+g++ -c ourPython.cpp -g
+g++ -c Object.cpp -g
+g++ -c Expression.cpp -g
+g++ -c Statement.cpp -g
+g++ -o ourPython ourPython.tab.o ourPython.o Object.o Expression.o Statement.o
+
+ *-------------------------------------------------------------------------*/
+
+
+#include	"ourPython.h"
+
+%}
+
+//  Erase this line and declare a %union here
+
+%error-verbose
+
+%start		single_input
+
+%token			NEWLINE SEMICOLON
+//  Erase this line and declare tokens and types here
+
+%%
+
+single_input    : {
+		    return(1);
+		  }
+		| NEWLINE
+		  {
+		    programRootPtr = $$	= NULL;
+		    YYACCEPT;
+		  }
+		| simple_stmt
+		  {
+		    programRootPtr = $$	= $1;
+		    YYACCEPT;
+		  }
+		| compound_stmt
+		  NEWLINE
+		  {
+		    programRootPtr = $$	= $1;
+		    YYACCEPT;
+		  };
+
+
+small_stmt	: expr_stmt
+		  {
+		    $$	= $1;
+		  }
+		| PRINT
+		  {
+		    $$	= new PrintStatement;
+		  }
+		| PRINT
+		  test
+		  {
+		    $$	= new PrintStatement($2);
+		  }
+		| test
+		  EQUALS
+		  test
+		  {
+		    $$	= new ExpressionStatement(new AssignmentExpression($1,$3));
+		  };
+
+
+
+//  Erase this line and define your rules here
+%%
+
+
+//  PURPOSE:  To tell the printable names of the values of 'pythonType_ty'.
+const char*	typeNameArray[]
+      		= {
+		    "none",
+		    "bool",
+		    "int",
+		    "float",
+		    "str",
+		    "type"
+		  };
+
+
+//  PURPOSE:  To tell the printable names of the values of 'operator_ty'.
+const char*	operatorNameArray[]
+      		= {
+		    "OR",
+		    "AND",
+		    "NOT",
+		    "+",
+		    "-",
+		    "*",
+		    "/",
+		    "%",
+		    "//",
+		    "**"
+		  };
+
+
+//  PURPOSE:  To hold the names of boolean constants.
+const char*	booleanConstName[]
+		= { "False",
+		    "True"
+		  };
+
+
+//  PURPOSE:  To serve as a global temporary C-string array.
+char		line[LINE_LEN];
+
+
+//  PURPOSE:  To point to the root of the abstract syntax tree.
+Statement*	programRootPtr	= NULL;
+
+
+//  PURPOSE:  To hold the variables and their values.
+VariableStore	variableStore;
+
+
+//  PURPOSE:  To handle the outputing of parse-time error message 'cPtr'.
+//	No return value.
+int		yyerror		(const char*	cPtr
+				)
+{
+  throw Exception(cPtr);
+}
+
+
+//  PURPOSE:  To interpret and run the Python program given in 'argv[1]'.
+//	Returns 'EXIT_SUCCESS' on success or 'EXIT_FAILURE' otherwise.
+int		main		(int		argc,
+				 char*		argv[]
+				)
+{
+  //  I.  Application validity check:
+  if  (argc < 2)
+  {
+    fprintf(stderr,"Usage:\t%s <pythonProg>\n",argv[0]);
+    exit(EXIT_FAILURE);
+  }
+
+  //  II.  Parse and execute program:
+  //  II.A.  Initialize file:
+  const char*	pythonFilepath	= argv[1];
+
+  if  ( (yyin = fopen(pythonFilepath,"r")) == NULL )
+  {
+    fprintf(stderr,"Error opening %s.\n",pythonFilepath);
+    exit(EXIT_FAILURE);
+  }
+
+  //  II.B.  Attempt to parse and assemble 'yyin':
+  int	status	= EXIT_SUCCESS;
+
+  try
+  {
+    //  II.B.1.  Attempt to parse:
+    while  ( !feof(yyin) && (yyparse() == 0) )
+    {
+      //  II.B.1.a.  Parse was successful and have tree:
+      if  (programRootPtr != NULL)
+      {
+
+        //  II.B.1.a.I.  It highest Statement was an Expression,
+        //  	       then convert it to a Print so output is generated:
+        ExpressionStatement*	exprPtr;
+
+        exprPtr	= dynamic_cast<ExpressionStatement*>(programRootPtr);
+
+        if  (exprPtr != NULL)
+        {
+	  programRootPtr = new PrintStatement(exprPtr->giveAwayExprPtr());
+
+	  safeDelete(exprPtr);
+        }
+
+        //  II.B.1.a.II.  Walk tree to evaluate it:
+        programRootPtr->run();
+
+        //  II.B.1.a.III.  Release memory:
+        safeDelete(programRootPtr);
+      }
+    }
+
+  }
+  catch  (Exception error)
+  {
+    fprintf(stderr,"Error: %s\n",error.getDescription().c_str());
+    status	= EXIT_FAILURE;
+  }
+
+  //  II.C.  Clean up:
+  fclose(yyin);
+
+  //  III.  Finished:
+  return(status);
+}
